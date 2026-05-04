@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Roboto", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-bg-black: #000000;
+  --color-surface-1: #0D0D0D;
+  --color-surface-2: #1A1A1A;
+  --color-surface-3: #262626;
+  --color-border: #333333;
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #A0A0A0;
+  --color-accent-lime: #39FF14;
+  --color-accent-lime-dim: rgba(57, 255, 20, 0.15);
+  --color-accent-lime-dark: rgba(57, 255, 20, 0.3);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  html, body {
+    height: 100dvh;
+    width: 100%;
+    overflow: hidden;
+    background-color: black;
+    color: white;
+    overscroll-behavior-y: none;
+  }
+
+  input, textarea {
+    user-select: text;
+  }
+}
+
+.ease-spring {
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes voice-visualize {
+  0% { transform: scale(0.9); box-shadow: 0 0 30px #39FF14, inset 0 0 15px #fff; }
+  100% { transform: scale(1.1); box-shadow: 0 0 70px #39FF14, inset 0 0 35px #fff; }
+}
+
+.animate-voice {
+  animation: voice-visualize 1.2s infinite alternate cubic-bezier(0.16, 1, 0.3, 1);
+}
