@@ -19,6 +19,9 @@
   * {
     -webkit-tap-highlight-color: transparent;
     user-select: none;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
   }
 
   html, body {
@@ -32,6 +35,7 @@
 
   input, textarea {
     user-select: text;
+    -webkit-user-select: text;
   }
 }
 
@@ -44,6 +48,16 @@
   100% { transform: scale(1.1); box-shadow: 0 0 70px #39FF14, inset 0 0 35px #fff; }
 }
 
+@keyframes orb-pulse {
+  0% { transform: scale(0.85); opacity: 0.6; box-shadow: 0 0 15px #39FF14; }
+  50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 50px #39FF14; }
+  100% { transform: scale(0.85); opacity: 0.6; box-shadow: 0 0 15px #39FF14; }
+}
+
 .animate-voice {
-  animation: voice-visualize 1.2s infinite alternate cubic-bezier(0.16, 1, 0.3, 1);
+  /* Using framer-motion for scale to avoid distortion conflicts */
+}
+
+.animate-orb-pulse {
+  animation: orb-pulse 1.5s infinite ease-in-out;
 }

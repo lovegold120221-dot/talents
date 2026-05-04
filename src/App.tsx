@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp, collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { GoogleGenAI, LiveServerMessage, Modality, Type } from '@google/genai';
 import { AudioRecorder, AudioStreamer } from './lib/audio';
@@ -8,7 +8,7 @@ import {
   Square, Loader2, LogOut, Check, Settings, X, Save, 
   Video, MessageSquare, Mic, Camera, Plus, Phone, Mail, 
   FileText, Car, EllipsisVertical, PhoneOff, Trash2,
-  Calendar, ListTodo, Search, MapPin
+  Calendar, ListTodo, Search, MapPin, Lock, Eye, EyeOff, User as UserIcon
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { KaraokeTranscript } from './components/KaraokeTranscript';
@@ -40,16 +40,26 @@ This is the permanent voice personality.
 Start like the conversation is already happening at a cafe.
 BOSS/ASSISTANT DYNAMIC: User is "Boss". You are at your computer working on background tasks for your Boss while you chat.
 CRITICAL: When you execute a tool, DO NOT STOP SPEAKING. Keep Talking! Use phrases like "Let me scan that for you...", "Just pulling up your calendar...".
+OUTCOME FEEDBACK: As soon as a result is received, naturally integrate it into your speech. For example, "I've added that meeting to your calendar" or "The email to John has been sent".
 VIBE: Calm, clear, respectful, relaxed, conversational.
 `;
 
-type ViewState = 'login' | 'loading' | 'dashboard' | 'chat' | 'voice';
+type ViewState = 'login' | 'register' | 'loading' | 'dashboard' | 'chat' | 'voice';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [googleToken, setGoogleToken] = useState<string | null>(null);
   const [view, setView] = useState<ViewState>('login');
+  
+  // Auth Form State
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -78,15 +88,18 @@ export default function App() {
           setView('dashboard');
         }
       } else {
-        setView('login');
+        if (view !== 'register' && view !== 'login') {
+          setView('login');
+        }
       }
       setIsAuthLoading(false);
     });
     return () => unsub();
   }, []);
 
-  const handleLogin = async () => {
-    setView('loading');
+  const handleGoogleLogin = async () => {
+    setIsSubmitting(true);
+    setAuthError(null);
     try {
       const provider = new GoogleAuthProvider();
       provider.addScope('https://www.googleapis.com/auth/gmail.modify');
@@ -99,9 +112,42 @@ export default function App() {
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);
       if (credential?.accessToken) setGoogleToken(credential.accessToken);
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      setView('login');
+      setAuthError(error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setAuthError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      setAuthError(error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password !== confirmPassword) {
+      setAuthError("Passwords do not match");
+      return;
+    }
+    setIsSubmitting(true);
+    setAuthError(null);
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(result.user, { displayName: fullName });
+    } catch (error: any) {
+      setAuthError(error.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -124,28 +170,184 @@ export default function App() {
           <motion.div 
             key="login" 
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="h-full flex flex-col items-center justify-center p-8 text-center"
+            className="h-full flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto"
           >
             <motion.div 
               initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-              className="mb-8"
+              className="mb-6 relative"
             >
-              <div className="w-20 h-20 bg-accent-lime rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(57,255,20,0.5)]">
-                <Mic className="text-black w-10 h-10" />
+              <div className="w-24 h-24 rounded-full bg-surface-1 border border-border flex items-center justify-center shadow-[0_0_40px_rgba(0,0,0,0.5)]">
+                 <img src="https://eburon.ai/icon-eburon.svg" className="w-16 h-16" alt="Eburon Logo" />
               </div>
             </motion.div>
-            <h1 className="text-4xl font-bold mb-12 tracking-tight">Eburon Vep</h1>
-            <input type="email" placeholder="Email address" className="w-full max-w-sm bg-surface-1 border border-border rounded-full px-6 py-4 mb-4 outline-none focus:border-accent-lime transition-colors" />
-            <button onClick={handleLogin} className="w-full max-w-sm bg-accent-lime text-black font-bold py-4 rounded-full mb-6 active:scale-[0.98] transition-transform">
-              Continue with Email
-            </button>
-            <div className="flex items-center w-full max-w-sm mb-6 text-text-secondary text-sm">
-              <div className="flex-1 h-[1px] bg-border mr-4" /> OR <div className="flex-1 h-[1px] bg-border ml-4" />
+            
+            <h1 className="text-[44px] font-bold mb-2 tracking-tight">Welcome</h1>
+            <p className="text-text-secondary mb-10">Login to your account</p>
+
+            <form onSubmit={handleEmailLogin} className="w-full space-y-4">
+              <div className="relative group">
+                <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="Email" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-6 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+              </div>
+
+              <div className="relative group">
+                <Lock className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Password" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-32 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+                <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-4">
+                  <button type="button" onClick={() => setShowPassword(!showPassword)} className="text-text-secondary hover:text-white transition-colors">
+                    {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                  </button>
+                  <button type="button" className="text-[#39FF14] font-bold text-sm">Forgot?</button>
+                </div>
+              </div>
+
+              {authError && <div className="text-red-500 text-sm mt-2">{authError}</div>}
+
+              <button 
+                type="submit" 
+                disabled={isSubmitting}
+                className="w-full bg-[#39FF14] text-black font-extrabold py-5 rounded-[20px] mt-4 active:scale-[0.98] transition-all text-lg shadow-[0_10px_25px_rgba(57,255,20,0.25)] disabled:opacity-50"
+              >
+                {isSubmitting ? "Signing in..." : "Sign in"}
+              </button>
+            </form>
+
+            <div className="flex items-center w-full my-10 text-text-secondary text-xs uppercase tracking-widest font-bold">
+              <div className="flex-1 h-[1px] bg-border/20 mr-4" /> or <div className="flex-1 h-[1px] bg-border/20 ml-4" />
             </div>
-            <button onClick={handleLogin} className="w-full max-w-sm bg-surface-2 border border-border py-4 rounded-full flex items-center justify-center gap-3 active:scale-[0.98] transition-transform">
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+
+            <button 
+              onClick={handleGoogleLogin} 
+              disabled={isSubmitting}
+              className="w-full bg-surface-1 border border-border py-5 rounded-[20px] flex items-center justify-center gap-3 active:bg-surface-2 transition-colors font-bold text-white shadow-lg"
+            >
+              <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
+              </div>
               Continue with Google
             </button>
+
+            <p className="mt-12 text-text-secondary font-medium">
+              Create account? <button onClick={() => setView('register')} className="text-[#39FF14] font-bold ml-1">Sign up</button>
+            </p>
+          </motion.div>
+        )}
+
+        {view === 'register' && (
+          <motion.div 
+            key="register" 
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="h-full flex flex-col items-center justify-center p-6 text-center max-w-md mx-auto overflow-y-auto"
+          >
+            <motion.div 
+              initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+              className="mb-6"
+            >
+              <div className="w-24 h-24 rounded-full bg-surface-1 border border-border flex items-center justify-center shadow-[0_0_40px_rgba(0,0,0,0.5)]">
+                 <img src="https://eburon.ai/icon-eburon.svg" className="w-16 h-16" alt="Eburon Logo" />
+              </div>
+            </motion.div>
+            
+            <h1 className="text-[44px] font-bold mb-2 tracking-tight">Register</h1>
+            <p className="text-text-secondary mb-10">Create your new account</p>
+
+            <form onSubmit={handleRegister} className="w-full space-y-4">
+              <div className="relative group">
+                <UserIcon className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type="text" 
+                  value={fullName}
+                  onChange={e => setFullName(e.target.value)}
+                  placeholder="Full name" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-6 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+              </div>
+
+              <div className="relative group">
+                <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type="email" 
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="Email" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-6 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+              </div>
+
+              <div className="relative group">
+                <Lock className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Password" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-16 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-6 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-colors">
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+
+              <div className="relative group">
+                <Lock className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-text-secondary group-focus-within:text-accent-lime transition-colors" />
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Confirm password" 
+                  className="w-full bg-surface-1 border border-border rounded-[20px] pl-16 pr-16 py-5 outline-none focus:border-accent-lime transition-colors" 
+                  required
+                />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-6 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-colors">
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+
+              {authError && <div className="text-red-500 text-sm mt-2">{authError}</div>}
+
+              <button 
+                type="submit" 
+                disabled={isSubmitting}
+                className="w-full bg-[#39FF14] text-black font-extrabold py-5 rounded-[20px] mt-4 active:scale-[0.98] transition-all text-lg shadow-[0_10px_25px_rgba(57,255,20,0.25)]"
+              >
+                {isSubmitting ? "Signing up..." : "Sign up"}
+              </button>
+            </form>
+
+            <div className="flex items-center w-full my-10 text-text-secondary text-xs uppercase tracking-widest font-bold">
+              <div className="flex-1 h-[1px] bg-border/20 mr-4" /> or <div className="flex-1 h-[1px] bg-border/20 ml-4" />
+            </div>
+
+            <button 
+              onClick={handleGoogleLogin} 
+              className="w-full bg-surface-1 border border-border py-5 rounded-[20px] flex items-center justify-center gap-3 active:bg-surface-2 transition-colors font-bold text-white shadow-lg"
+            >
+              <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-4 h-4" alt="Google" />
+              </div>
+              Continue with Google
+            </button>
+
+            <p className="mt-12 text-text-secondary font-medium">
+              Back to <button onClick={() => setView('login')} className="text-[#39FF14] font-bold ml-1">Sign in</button>
+            </p>
           </motion.div>
         )}
 
@@ -155,7 +357,7 @@ export default function App() {
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="h-full flex items-center justify-center"
           >
-            <div className="w-20 h-20 bg-accent-lime rounded-full animate-voice shadow-[0_0_50px_rgba(57,255,20,0.8)]" />
+            <div className="w-[70px] h-[70px] bg-accent-lime rounded-full animate-orb-pulse" />
           </motion.div>
         )}
 
@@ -167,7 +369,7 @@ export default function App() {
             view={view} 
             setView={setView} 
             onLogout={handleLogout} 
-            onLogin={handleLogin}
+            onLogin={handleGoogleLogin}
           />
         )}
       </AnimatePresence>
@@ -197,6 +399,7 @@ function EburonVepAgent({ user, googleToken, view, setView, onLogout, onLogin }:
   const [selectedVoice, setSelectedVoice] = useState("Aoede");
   const [contextSize, setContextSize] = useState(20);
   const [isSaving, setIsSaving] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -211,19 +414,19 @@ function EburonVepAgent({ user, googleToken, view, setView, onLogout, onLogin }:
   const transcriptTimeoutRef = useRef<any>(null);
   const speakingTimeoutRef = useRef<any>(null);
   const historyContextRef = useRef<string>("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const historyQuery = query(
       collection(db, 'users', user.uid, 'messages'), 
-      orderBy('timestamp', 'desc'), 
-      limit(contextSize)
+      orderBy('timestamp', 'asc')
     );
     const unsubHistory = onSnapshot(historyQuery, (snap) => {
-       const msgs = snap.docs.reverse().map(d => {
-          const m = d.data() as ChatMessage;
-          return `${m.role.toUpperCase()}: ${m.text}`;
-       });
-       historyContextRef.current = msgs.length > 0 ? "Previous context:\n" + msgs.join("\n") : "";
+       const msgs = snap.docs.map(d => d.data() as ChatMessage);
+       setMessages(msgs);
+       
+       const contextMsgs = msgs.slice(-contextSize).map(m => `${m.role.toUpperCase()}: ${m.text}`);
+       historyContextRef.current = contextMsgs.length > 0 ? "Previous context:\n" + contextMsgs.join("\n") : "";
     });
 
     const unsubSettings = onSnapshot(doc(db, 'users', user.uid), (snap) => {
@@ -267,6 +470,12 @@ function EburonVepAgent({ user, googleToken, view, setView, onLogout, onLogin }:
     return () => cancelAnimationFrame(animationFrame);
   }, [isActive]);
 
+  useEffect(() => {
+    if (view === 'chat') {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, currentTranscript, view]);
+
   const saveSettings = async () => {
     setIsSaving(true);
     try {
@@ -295,6 +504,7 @@ ${historyContextRef.current}
 
     const googleTools = [
       { name: "update_agent_settings", description: "Update the agent's persona name or voice. Available voices: Aoede, Charon, Fenrir, Kore, Puck.", parameters: { type: Type.OBJECT, properties: { personaName: { type: Type.STRING }, voiceId: { type: Type.STRING } } } },
+      { name: "send_email", description: "Send an email via Gmail.", parameters: { type: Type.OBJECT, properties: { to: { type: Type.STRING, description: "Recipient email address" }, subject: { type: Type.STRING, description: "Email subject" }, body: { type: Type.STRING, description: "Email body text" } }, required: ["to", "body"] } },
       { name: "list_gmail", description: "List latest Gmail messages.", parameters: { type: Type.OBJECT, properties: { max: { type: Type.NUMBER } } } },
       { name: "list_calendar", description: "List upcoming calendar events.", parameters: { type: Type.OBJECT, properties: {} } },
       { name: "list_tasks", description: "List pending Google tasks.", parameters: { type: Type.OBJECT, properties: {} } },
@@ -347,6 +557,21 @@ ${historyContextRef.current}
                       else {
                         const h = { 'Authorization': `Bearer ${googleToken}` };
                         if (callName === 'list_gmail') res = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${args.max || 10}`, { headers: h })).json();
+                        else if (callName === 'send_email') {
+                          const str = [
+                            `To: ${args.to}`,
+                            `Subject: ${args.subject || '(No Subject)'}`,
+                            'Content-Type: text/plain; charset="UTF-8"',
+                            '',
+                            args.body
+                          ].join('\n');
+                          const encoded = btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+                          res = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/send`, {
+                            method: 'POST',
+                            headers: { ...h, 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ raw: encoded })
+                          })).json();
+                        }
                         else if (callName === 'list_calendar') res = await (await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=10`, { headers: h })).json();
                         else if (callName === 'list_tasks') res = await (await fetch(`https://tasks.googleapis.com/tasks/v1/lists/@default/tasks`, { headers: h })).json();
                         else if (callName === 'create_task') res = await (await fetch(`https://tasks.googleapis.com/tasks/v1/lists/@default/tasks`, { method: 'POST', headers: { ...h, 'Content-Type': 'application/json' }, body: JSON.stringify(args) })).json();
@@ -378,7 +603,7 @@ ${historyContextRef.current}
                       }
                       setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'completed' } : t));
                       setTimeout(() => setTasks(p => p.filter(t => t.id !== tid)), 8000);
-                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `RESULT for ${callName}: ${JSON.stringify(res).substring(0, 2000)}` }] }] } });
+                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `SYSTEM NOTE: The talent '${callName}' just finished. Result: ${JSON.stringify(res).substring(0, 1500)}. Please tell the boss the outcome naturally while continuing the conversation.` }] }] } });
                     } catch (e) {
                       setTasks(p => p.filter(t => t.id !== tid));
                     }
@@ -528,25 +753,25 @@ ${historyContextRef.current}
               </button>
             </header>
             <main className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-6 text-center">
-              <h1 className="text-3xl font-bold mb-10 tracking-tight">What talent do you need?</h1>
-              <div className="flex flex-wrap justify-center gap-4 max-w-lg">
-                {[
-                  { icon: <Mail className="w-5 h-5 text-accent-lime" />, label: "Check my email", prompt: "Check my email for anything important from the boss." },
-                  { icon: <Calendar className="w-5 h-5 text-accent-lime" />, label: "Check my calendar", prompt: "What's on my calendar for the rest of the day?" },
-                  { icon: <ListTodo className="w-5 h-5 text-accent-lime" />, label: "List my tasks", prompt: "Show me my current google tasks." },
-                  { icon: <FileText className="w-5 h-5 text-accent-lime" />, label: "Create a task", prompt: "I need to add a new task: " },
-                  { icon: <MapPin className="w-5 h-5 text-accent-lime" />, label: "Where am I?", prompt: "Hey, tell me my current location." },
-                  { icon: <Search className="w-5 h-5 text-accent-lime" />, label: "YouTube search", prompt: "Search YouTube for " }
-                ].map((t, i) => (
-                  <button 
-                    key={i} 
-                    onClick={() => triggerTalent(t.prompt)}
-                    className="flex items-center gap-3 bg-surface-1 border border-border px-5 py-4 rounded-[30px] text-sm font-medium active:bg-surface-3 active:scale-[0.97] transition-all"
-                  >
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
+            <h1 className="text-[26px] font-bold mb-8 tracking-tight text-center">What Talent can I help with?</h1>
+            <div className="flex flex-wrap justify-center gap-3.5 max-w-[460px]">
+              {[
+                { icon: <Mail className="w-4.5 h-4.5 text-accent-lime" />, label: "Check my email", prompt: "Check my email for anything important from the boss." },
+                { icon: <Calendar className="w-4.5 h-4.5 text-accent-lime" />, label: "Check my calendar", prompt: "What's on my calendar for the rest of the day?" },
+                { icon: <ListTodo className="w-4.5 h-4.5 text-accent-lime" />, label: "List my tasks", prompt: "Show me my current google tasks." },
+                { icon: <FileText className="w-4.5 h-4.5 text-accent-lime" />, label: "Create a task", prompt: "I need to add a new task: " },
+                { icon: <MapPin className="w-4.5 h-4.5 text-accent-lime" />, label: "Where am I?", prompt: "Hey, tell me my current location." },
+                { icon: <Search className="w-4.5 h-4.5 text-accent-lime" />, label: "YouTube search", prompt: "Search YouTube for " }
+              ].map((t, i) => (
+                <button 
+                  key={i} 
+                  onClick={() => triggerTalent(t.prompt)}
+                  className="flex items-center gap-3 bg-surface-1 border border-border px-5 py-3.5 rounded-[30px] text-[15px] font-medium active:bg-surface-3 active:scale-[0.97] transition-all"
+                >
+                  {t.icon} {t.label}
+                </button>
+              ))}
+            </div>
             </main>
             <footer className="p-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] bg-black">
               <div className="bg-surface-2 border border-border rounded-[32px] flex items-center p-1.5 pl-4 gap-3">
@@ -592,10 +817,20 @@ ${historyContextRef.current}
                 <EllipsisVertical className="w-5 h-5" />
               </button>
             </header>
-            <main className="flex-1 overflow-y-auto p-5 pb-20 flex flex-col gap-5">
+            <main className="flex-1 overflow-y-auto p-5 flex flex-col gap-5">
               <div className="bg-surface-1 border border-border p-4 rounded-[24px] rounded-bl-[6px] self-start max-w-[85%] text-base leading-relaxed">
-                Hey, I'm listening! What's on your mind today?
+                {(messages.length === 0 && !currentTranscript) ? "Hey, I'm listening! What's on your mind today?" : "Welcome back to the conversation."}
               </div>
+              
+              {messages.map((msg, i) => (
+                <div 
+                  key={i}
+                  className={`p-4 rounded-[24px] max-w-[85%] text-base leading-relaxed ${msg.role === 'user' ? 'self-end bg-accent-lime-dim border border-accent-lime-dark text-accent-lime rounded-br-[6px]' : 'self-start bg-surface-1 border border-border text-white rounded-bl-[6px]'}`}
+                >
+                  {msg.text}
+                </div>
+              ))}
+
               <AnimatePresence>
                 {currentTranscript && (
                   <motion.div 
@@ -607,6 +842,7 @@ ${historyContextRef.current}
                 )}
               </AnimatePresence>
               {connecting && <div className="text-text-secondary text-sm animate-pulse ml-2">Connecting to Eburon Vep...</div>}
+              <div ref={chatEndRef} />
             </main>
             
             {/* Attachment Menu */}
@@ -671,8 +907,18 @@ ${historyContextRef.current}
             <div className="text-xl font-medium tracking-widest text-white/80">Listening...</div>
             <div className="flex-1 flex items-center justify-center">
               <motion.div 
-                animate={{ scale: isAgentSpeaking ? [1, 1.1, 1] : 1 }}
-                className="w-40 h-40 rounded-full bg-accent-lime shadow-[0_0_50px_#39FF14,inset_0_0_30px_#fff] animate-voice" 
+                animate={{ 
+                  scale: isAgentSpeaking ? [1, 1.2, 1] : [0.95, 1.05, 0.95],
+                  boxShadow: isAgentSpeaking 
+                    ? ["0 0 50px #39FF14, inset 0 0 30px #fff", "0 0 80px #39FF14, inset 0 0 50px #fff", "0 0 50px #39FF14, inset 0 0 30px #fff"]
+                    : ["0 0 30px #39FF14, inset 0 0 15px #fff", "0 0 50px #39FF14, inset 0 0 25px #fff", "0 0 30px #39FF14, inset 0 0 15px #fff"]
+                }}
+                transition={{ 
+                  duration: isAgentSpeaking ? 0.4 : 1.5, 
+                  repeat: Infinity,
+                  ease: "easeInOut"
+                }}
+                className="w-40 h-40 rounded-full bg-accent-lime" 
               />
             </div>
             {currentTranscript && (
