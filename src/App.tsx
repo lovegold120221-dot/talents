@@ -294,6 +294,7 @@ ${historyContextRef.current}
 `;
 
     const googleTools = [
+      { name: "update_agent_settings", description: "Update the agent's persona name or voice. Available voices: Aoede, Charon, Fenrir, Kore, Puck.", parameters: { type: Type.OBJECT, properties: { personaName: { type: Type.STRING }, voiceId: { type: Type.STRING } } } },
       { name: "list_gmail", description: "List latest Gmail messages.", parameters: { type: Type.OBJECT, properties: { max: { type: Type.NUMBER } } } },
       { name: "list_calendar", description: "List upcoming calendar events.", parameters: { type: Type.OBJECT, properties: {} } },
       { name: "list_tasks", description: "List pending Google tasks.", parameters: { type: Type.OBJECT, properties: {} } },
@@ -353,6 +354,26 @@ ${historyContextRef.current}
                         else if (callName === 'get_location') {
                           const pos = await new Promise<any>((rs, rj) => navigator.geolocation.getCurrentPosition(rs, rj));
                           res = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                        }
+                      }
+                      if (callName === 'update_agent_settings') {
+                        const updates: any = {};
+                        if (args.personaName) {
+                          setPersonaName(args.personaName);
+                          updates.personaName = args.personaName;
+                        }
+                        if (args.voiceId) {
+                          const voiceExists = VOICE_ALIASES.find(v => v.id.toLowerCase() === args.voiceId.toLowerCase());
+                          if (voiceExists) {
+                            setSelectedVoice(voiceExists.id);
+                            updates.selectedVoice = voiceExists.id;
+                          }
+                        }
+                        if (Object.keys(updates).length > 0) {
+                          await setDoc(doc(db, 'users', user.uid), { settings: updates, updatedAt: serverTimestamp() }, { merge: true });
+                          res = { success: true, updated: updates, message: "Settings updated successfully. If voice was changed, it will take effect next time you connect." };
+                        } else {
+                          res = { error: "No valid settings provided to update." };
                         }
                       }
                       setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'completed' } : t));
