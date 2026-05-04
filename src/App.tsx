@@ -440,7 +440,9 @@ function EburonVepAgent({ user, googleToken, view, setView, onLogout, onLogin }:
     });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    if (apiKey) aiRef.current = new GoogleGenAI({ apiKey });
+    if (apiKey) {
+      aiRef.current = new GoogleGenAI({ apiKey });
+    }
     audioStreamerRef.current = new AudioStreamer();
 
     return () => {
@@ -601,9 +603,32 @@ ${historyContextRef.current}
                           res = { error: "No valid settings provided to update." };
                         }
                       }
+
+                      // Use Gemini 2.0 Flash Lite to summarize the raw tool result for the Live model
+                      let finalFeedback = JSON.stringify(res).substring(0, 2000);
+                      if (aiRef.current && callName !== 'get_location' && callName !== 'update_agent_settings') {
+                        try {
+                          const summaryResult = await aiRef.current.models.generateContent({
+                            model: "gemini-2.0-flash-lite-preview-02-05",
+                            contents: `
+                            Analyze this raw JSON result from a tool call for the talent '${callName}'.
+                            The user (the Boss) is in a voice conversation with an AI assistant.
+                            Summarize the key information so the assistant can report it naturally.
+                            If it's a list (like emails or calendar), pick the top 3-5 most relevant items.
+                            Keep the summary under 150 words.
+                            
+                            RAW RESULT:
+                            ${JSON.stringify(res).substring(0, 10000)}
+                          `});
+                          finalFeedback = summaryResult.text || finalFeedback;
+                        } catch (summaryErr) {
+                          console.error("Summarization error:", summaryErr);
+                        }
+                      }
+
                       setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'completed' } : t));
                       setTimeout(() => setTasks(p => p.filter(t => t.id !== tid)), 8000);
-                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `SYSTEM NOTE: The talent '${callName}' just finished. Result: ${JSON.stringify(res).substring(0, 1500)}. Please tell the boss the outcome naturally while continuing the conversation.` }] }] } });
+                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `SYSTEM NOTE: The talent '${callName}' execution is complete. Here is the distilled result for you to report to the Boss: ${finalFeedback}` }] }] } });
                     } catch (e) {
                       setTasks(p => p.filter(t => t.id !== tid));
                     }

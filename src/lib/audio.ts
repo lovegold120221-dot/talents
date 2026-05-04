@@ -58,48 +58,49 @@ export class AudioStreamer {
         float32Array[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7FFF);
     }
     this.queue.push(float32Array);
-    if (!this.isPlaying) {
-      this.playNext();
-    }
+    this.scheduleNext();
   }
 
-  private playNext() {
+  private scheduleNext() {
     if (!this.audioContext || this.queue.length === 0) {
-      this.isPlaying = false;
       return;
     }
-    this.isPlaying = true;
-    const chunk = this.queue.shift()!;
-    const audioBuffer = this.audioContext.createBuffer(1, chunk.length, this.sampleRate);
-    audioBuffer.getChannelData(0).set(chunk);
-    
-    this.source = this.audioContext.createBufferSource();
-    this.source.buffer = audioBuffer;
-    this.source.connect(this.analyser || this.audioContext.destination);
     
     const currentTime = this.audioContext.currentTime;
     if (this.scheduledTime < currentTime) {
-      this.scheduledTime = currentTime;
+      this.scheduledTime = currentTime + 0.05; // Quick start buffer
     }
-    
-    this.source.start(this.scheduledTime);
-    this.scheduledTime += audioBuffer.duration;
-    
-    // Play next seamlessly, not perfect but avoids large gaps
-    setTimeout(() => {
-        this.playNext();
-    }, (audioBuffer.duration * 1000) - 20); 
+
+    while (this.queue.length > 0 && this.scheduledTime < currentTime + 0.5) {
+      const chunk = this.queue.shift()!;
+      const audioBuffer = this.audioContext.createBuffer(1, chunk.length, this.sampleRate);
+      audioBuffer.getChannelData(0).set(chunk);
+      
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.analyser || this.audioContext.destination);
+      
+      source.start(this.scheduledTime);
+      this.scheduledTime += audioBuffer.duration;
+      source.onended = () => {
+        if (this.queue.length === 0) {
+          this.isPlaying = false;
+        }
+      };
+      this.isPlaying = true;
+    }
+
+    if (this.queue.length > 0) {
+      setTimeout(() => this.scheduleNext(), 100);
+    }
   }
 
   stop() {
     this.queue = [];
-    if (this.source) {
-      try {
-        this.source.stop();
-      } catch (e) {}
-    }
     this.isPlaying = false;
     this.scheduledTime = 0;
+    // We don't stop the AudioContext because we want to reuse it, 
+    // but we can close it if actually needed.
   }
 }
 
@@ -136,15 +137,12 @@ export class AudioRecorder {
         const s = Math.max(-1, Math.min(1, input[i]));
         output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
       }
-      const buffer = new ArrayBuffer(output.length * 2);
-      const view = new DataView(buffer);
-      for (let i = 0; i < output.length; i++) {
-        view.setInt16(i * 2, output[i], true);
-      }
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
+      
+      const uint8 = new Uint8Array(output.buffer);
+      let binary = "";
+      const chunk = 0x8000;
+      for (let i = 0; i < uint8.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, Array.from(uint8.subarray(i, i + chunk)));
       }
       this.onData(btoa(binary));
     };
