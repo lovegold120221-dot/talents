@@ -44,7 +44,7 @@ OUTCOME FEEDBACK: As soon as a result is received, naturally integrate it into y
 VIBE: Calm, clear, respectful, relaxed, conversational.
 `;
 
-type ViewState = 'login' | 'register' | 'loading' | 'dashboard' | 'chat' | 'voice';
+type ViewState = 'login' | 'register' | 'loading' | 'dashboard' | 'chat' | 'voice' | 'persona' | 'knowledge';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -610,16 +610,22 @@ ${historyContextRef.current}
                         try {
                           const summaryResult = await aiRef.current.models.generateContent({
                             model: "gemini-2.0-flash-lite-preview-02-05",
-                            contents: `
-                            Analyze this raw JSON result from a tool call for the talent '${callName}'.
-                            The user (the Boss) is in a voice conversation with an AI assistant.
-                            Summarize the key information so the assistant can report it naturally.
-                            If it's a list (like emails or calendar), pick the top 3-5 most relevant items.
-                            Keep the summary under 150 words.
-                            
-                            RAW RESULT:
-                            ${JSON.stringify(res).substring(0, 10000)}
-                          `});
+                            contents: [{
+                              role: 'user',
+                              parts: [{
+                                text: `
+                                  Analyze this raw JSON result from a tool call for the skill '${callName}'.
+                                  The user (the Boss) is in a voice conversation with an AI assistant.
+                                  Summarize the key information so the assistant can report it naturally.
+                                  If it's a list (like emails or calendar), pick the top 3-5 most relevant items.
+                                  Keep the summary under 150 words.
+                                  
+                                  RAW RESULT:
+                                  ${JSON.stringify(res).substring(0, 10000)}
+                                `
+                              }]
+                            }]
+                          });
                           finalFeedback = summaryResult.text || finalFeedback;
                         } catch (summaryErr) {
                           console.error("Summarization error:", summaryErr);
@@ -628,13 +634,13 @@ ${historyContextRef.current}
 
                       setTasks(p => p.map(t => t.id === tid ? { ...t, status: 'completed' } : t));
                       setTimeout(() => setTasks(p => p.filter(t => t.id !== tid)), 8000);
-                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `SYSTEM NOTE: The talent '${callName}' execution is complete. Here is the distilled result for you to report to the Boss: ${finalFeedback}` }] }] } });
+                      sessionRef.current?.send({ clientContent: { turns: [{ role: 'user', parts: [{ text: `SYSTEM NOTE: The skill '${callName}' execution is complete. Here is the distilled result for you to report to the Boss: ${finalFeedback}` }] }] } });
                     } catch (e) {
                       setTasks(p => p.filter(t => t.id !== tid));
                     }
                   };
                   exec(call.id, call.name, call.args);
-                  responses.push({ id: call.id, name: call.name, response: { result: { async_status: "Processing requested talent. Keep talking to the boss." } } });
+                  responses.push({ id: call.id, name: call.name, response: { result: { async_status: "Processing requested skill. Keep talking to the boss." } } });
                 }
                 sessionRef.current?.send({ toolResponse: { functionResponses: responses } });
               }
@@ -739,15 +745,47 @@ ${historyContextRef.current}
     setChatInput("");
   };
 
-  const triggerTalent = (prompt: string) => {
-    if (!isActive) {
-      startSession().then(() => {
-        setChatInput(prompt);
+  const handleTextPrompt = async (text: string) => {
+    if (!text.trim()) return;
+    setView('chat');
+    
+    // Add user message to UI immediately for feedback
+    const userMsg: ChatMessage = { role: 'user', text, timestamp: new Date() };
+    setMessages(prev => [...prev, userMsg]);
+
+    try {
+      await setDoc(doc(collection(db, 'users', user.uid, 'history')), {
+        role: 'user',
+        text,
+        timestamp: serverTimestamp()
       });
-    } else {
-      setChatInput(prompt);
-      setView('chat');
+
+      if (aiRef.current) {
+        // Use Gemini 2.0 Flash Lite for fast text response
+        const response = await aiRef.current.models.generateContent({
+          model: "gemini-2.0-flash-lite-preview-02-05",
+          contents: [{ role: 'user', parts: [{ text }] }]
+        });
+        
+        const aiText = response.text || "I'm sorry, I couldn't generate a response.";
+        await setDoc(doc(collection(db, 'users', user.uid, 'history')), {
+          role: 'model',
+          text: aiText,
+          timestamp: serverTimestamp()
+        });
+      }
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'history');
     }
+  };
+
+  const triggerVoice = () => {
+    setView('voice');
+    if (!isActive) startSession();
+  };
+
+  const triggerSkill = (prompt: string) => {
+    handleTextPrompt(prompt);
   };
 
   useEffect(() => {
@@ -778,8 +816,8 @@ ${historyContextRef.current}
               </button>
             </header>
             <main className="flex-1 overflow-y-auto flex flex-col items-center justify-center p-6 text-center">
-            <h1 className="text-[26px] font-bold mb-8 tracking-tight text-center">What Talent can I help with?</h1>
-            <div className="flex flex-wrap justify-center gap-3.5 max-w-[460px]">
+            <h1 className="text-[26px] font-bold mb-8 tracking-tight text-center">Boss, what to do?</h1>
+            <div className="flex flex-wrap justify-center gap-3.5 max-w-[460px] mb-12">
               {[
                 { icon: <Mail className="w-4.5 h-4.5 text-accent-lime" />, label: "Check my email", prompt: "Check my email for anything important from the boss." },
                 { icon: <Calendar className="w-4.5 h-4.5 text-accent-lime" />, label: "Check my calendar", prompt: "What's on my calendar for the rest of the day?" },
@@ -790,13 +828,15 @@ ${historyContextRef.current}
               ].map((t, i) => (
                 <button 
                   key={i} 
-                  onClick={() => triggerTalent(t.prompt)}
+                  onClick={() => handleTextPrompt(t.prompt)}
                   className="flex items-center gap-3 bg-surface-1 border border-border px-5 py-3.5 rounded-[30px] text-[15px] font-medium active:bg-surface-3 active:scale-[0.97] transition-all"
                 >
                   {t.icon} {t.label}
                 </button>
               ))}
             </div>
+
+
             </main>
             <footer className="p-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] bg-black">
               <div className="bg-surface-2 border border-border rounded-[32px] flex items-center p-1.5 pl-4 gap-3">
@@ -809,10 +849,10 @@ ${historyContextRef.current}
                   className="flex-1 bg-transparent border-none outline-none text-base text-white placeholder-text-secondary h-10"
                   onFocus={() => setView('chat')}
                 />
-                <button onClick={() => setView('voice')} className="text-text-secondary p-2.5 active:bg-surface-3 rounded-full transition-colors">
+                <button onClick={triggerVoice} className="text-text-secondary p-2.5 active:bg-surface-3 rounded-full transition-colors">
                   <Mic />
                 </button>
-                <button onClick={startSession} className="w-11 h-11 bg-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
+                <button onClick={triggerVoice} className="w-11 h-11 bg-white rounded-full flex items-center justify-center active:scale-90 transition-transform">
                   <div className="flex gap-[2px]">
                     <span className="w-[3px] h-2 bg-black rounded-full" />
                     <span className="w-[3px] h-4 bg-black rounded-full" />
@@ -907,7 +947,7 @@ ${historyContextRef.current}
                   />
                 </div>
                 {!isActive ? (
-                  <button onClick={startSession} className="bg-accent-lime text-black px-5 h-12 rounded-[25px] font-bold flex items-center gap-2 active:scale-95 transition-transform">
+                  <button onClick={triggerVoice} className="bg-accent-lime text-black px-5 h-12 rounded-[25px] font-bold flex items-center gap-2 active:scale-95 transition-transform">
                     <div className="flex gap-[2px]">
                       <span className="w-[3px] h-2 bg-black rounded-full" />
                       <span className="w-[3px] h-4 bg-black rounded-full" />
@@ -962,6 +1002,116 @@ ${historyContextRef.current}
             </div>
           </motion.div>
         )}
+
+        {view === 'persona' && (
+          <motion.div 
+            key="persona" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
+            className="h-full bg-black flex flex-col"
+          >
+            <header className="px-5 py-4 pt-[max(env(safe-area-inset-top),1rem)] flex items-center gap-4 border-b border-surface-1">
+              <button onClick={() => setView('dashboard')} className="p-2 -ml-2 text-white"><X /></button>
+              <h2 className="text-xl font-bold">Customize Persona</h2>
+            </header>
+            <main className="flex-1 overflow-y-auto p-6 space-y-8">
+              <div className="flex flex-col items-center mb-8">
+                <div className="w-24 h-24 rounded-full bg-surface-1 border border-border flex items-center justify-center mb-4 transition-all hover:border-accent-lime cursor-pointer group">
+                  <UserIcon className="w-10 h-10 text-white group-hover:text-accent-lime" />
+                </div>
+                <button className="text-accent-lime font-bold text-sm">Change Avatar</button>
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <label className="text-xs uppercase tracking-widest text-text-secondary font-extrabold mb-3 block">Agent Name</label>
+                  <input 
+                    type="text" 
+                    value={personaName} 
+                    onChange={e => setPersonaName(e.target.value)} 
+                    className="w-full bg-surface-1 border border-border rounded-2xl px-5 py-4 focus:border-accent-lime outline-none transition-colors font-medium" 
+                    placeholder="Enter agent name"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs uppercase tracking-widest text-text-secondary font-extrabold mb-3 block">Select Voice</label>
+                  <div className="relative group/voice">
+                    <select 
+                      value={selectedVoice} 
+                      onChange={e => setSelectedVoice(e.target.value)}
+                      className="w-full bg-surface-1 border border-border rounded-2xl px-5 py-4 outline-none appearance-none focus:border-accent-lime transition-all font-medium pr-10 cursor-pointer"
+                    >
+                      {VOICE_ALIASES.map(v => (
+                        <option key={v.id} value={v.id} className="bg-surface-1">{v.name}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-text-secondary">
+                      <Settings className="w-5 h-5" />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs uppercase tracking-widest text-text-secondary font-extrabold mb-3 block">Base Prompt / Identity</label>
+                  <textarea 
+                    rows={4}
+                    className="w-full bg-surface-1 border border-border rounded-2xl px-5 py-4 focus:border-accent-lime outline-none transition-colors font-medium resize-none"
+                    placeholder="Describe how the agent should behave..."
+                    defaultValue="You are Eburon Vep, a highly capable AI assistant..."
+                  />
+                </div>
+              </div>
+            </main>
+            <footer className="p-6 border-t border-surface-1">
+              <button 
+                onClick={() => setView('dashboard')}
+                className="w-full bg-accent-lime text-black font-extrabold py-5 rounded-[20px] active:scale-[0.98] transition-all text-lg shadow-[0_10px_25px_rgba(57,255,20,0.25)]"
+              >
+                Save Changes
+              </button>
+            </footer>
+          </motion.div>
+        )}
+
+        {view === 'knowledge' && (
+          <motion.div 
+            key="knowledge" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}
+            className="h-full bg-black flex flex-col"
+          >
+            <header className="px-5 py-4 pt-[max(env(safe-area-inset-top),1rem)] flex items-center gap-4 border-b border-surface-1">
+              <button onClick={() => setView('dashboard')} className="p-2 -ml-2 text-white"><X /></button>
+              <h2 className="text-xl font-bold">Knowledge Base</h2>
+            </header>
+            <main className="flex-1 overflow-y-auto p-6">
+              <div className="bg-surface-1 border-2 border-dashed border-border rounded-3xl p-12 flex flex-col items-center justify-center text-center group hover:border-blue-500 transition-colors cursor-pointer mb-8">
+                <div className="w-16 h-16 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Plus className="w-8 h-8 text-blue-500" />
+                </div>
+                <h3 className="font-bold text-lg mb-2">Upload Knowledge</h3>
+                <p className="text-text-secondary text-sm">Drag and drop PDF, TXT or DOCX files here to train your agent.</p>
+              </div>
+
+              <h3 className="text-xs uppercase tracking-widest text-text-secondary font-extrabold mb-4">Integrations</h3>
+              <div className="grid grid-cols-1 gap-4">
+                {[
+                  { name: "Google Drive", icon: <FileText className="text-blue-400" />, status: "Connected" },
+                  { name: "Gmail", icon: <Mail className="text-red-400" />, status: "Syncing..." },
+                  { name: "Calendar", icon: <Calendar className="text-accent-lime" />, status: "Disconnected" }
+                ].map((int, i) => (
+                  <div key={i} className="flex items-center justify-between p-5 bg-surface-1 border border-border rounded-2xl group hover:border-surface-3 transition-all">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-black flex items-center justify-center">{int.icon}</div>
+                      <div>
+                        <div className="font-bold">{int.name}</div>
+                        <div className="text-xs text-text-secondary">{int.status}</div>
+                      </div>
+                    </div>
+                    <button className="text-xs font-bold bg-surface-2 px-4 py-2 rounded-full active:scale-95 transition-transform">Configure</button>
+                  </div>
+                ))}
+              </div>
+            </main>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       {/* Settings Modal */}
@@ -971,8 +1121,29 @@ ${historyContextRef.current}
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowSettings(false)} className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100]" />
             <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="fixed bottom-0 left-0 right-0 max-w-lg mx-auto bg-surface-1 border-t border-border rounded-t-[32px] p-6 z-[101] max-h-[85vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-8">
-                <h2 className="text-xl font-bold">Talents & Settings</h2>
+                <h2 className="text-xl font-bold">Skills & Settings</h2>
                 <button onClick={() => setShowSettings(false)} className="p-2"><X /></button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 w-full mb-6">
+                <button 
+                  onClick={() => { setView('persona'); setShowSettings(false); }}
+                  className="flex flex-col items-center gap-3 p-6 bg-surface-2 border border-border rounded-[24px] hover:border-accent-lime transition-all"
+                >
+                  <div className="p-3 bg-accent-lime/10 rounded-full">
+                    <UserIcon className="w-6 h-6 text-accent-lime" />
+                  </div>
+                  <span className="font-bold">Customize Persona</span>
+                </button>
+                <button 
+                  onClick={() => { setView('knowledge'); setShowSettings(false); }}
+                  className="flex flex-col items-center gap-3 p-6 bg-surface-2 border border-border rounded-[24px] hover:border-accent-lime transition-all"
+                >
+                  <div className="p-3 bg-blue-500/10 rounded-full">
+                    <FileText className="w-6 h-6 text-blue-500" />
+                  </div>
+                  <span className="font-bold">Knowledge Base</span>
+                </button>
               </div>
               
               <div className="space-y-6">
@@ -983,13 +1154,15 @@ ${historyContextRef.current}
                 
                 <div>
                   <label className="text-xs uppercase tracking-widest text-text-secondary font-bold mb-2 block">Voice (Simulation)</label>
-                  <div className="grid grid-cols-1 gap-2">
+                  <select 
+                    value={selectedVoice} 
+                    onChange={e => setSelectedVoice(e.target.value)}
+                    className="w-full bg-surface-2 border border-border rounded-2xl px-5 py-4 outline-none focus:border-accent-lime transition-all font-medium cursor-pointer"
+                  >
                     {VOICE_ALIASES.map(v => (
-                      <button key={v.id} onClick={() => setSelectedVoice(v.id)} className={`flex justify-between px-5 py-4 rounded-2xl border transition-all ${selectedVoice === v.id ? 'bg-accent-lime-dim border-accent-lime-dark text-accent-lime' : 'bg-surface-2 border-border text-text-secondary'}`}>
-                        {v.name} {selectedVoice === v.id && <Check className="w-4 h-4" />}
-                      </button>
+                      <option key={v.id} value={v.id}>{v.name}</option>
                     ))}
-                  </div>
+                  </select>
                 </div>
 
                 <div className="bg-surface-2 border border-border p-5 rounded-2xl">
@@ -1003,7 +1176,7 @@ ${historyContextRef.current}
                 </div>
 
                 <button onClick={saveSettings} disabled={isSaving} className="w-full bg-accent-lime text-black font-bold py-4 rounded-full flex items-center justify-center gap-2 disabled:opacity-50 h-14">
-                  {isSaving ? <Loader2 className="animate-spin" /> : <Save />} Save Talents
+                  {isSaving ? <Loader2 className="animate-spin" /> : <Save />} Save Skills
                 </button>
 
                 <button onClick={onLogout} className="w-full bg-surface-2 border border-red-900/30 text-red-500 font-bold py-4 rounded-full flex items-center justify-center gap-2 h-14">
